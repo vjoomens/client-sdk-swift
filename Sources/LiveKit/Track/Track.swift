@@ -449,7 +449,8 @@ extension Track {
         }
 
         guard let statisticsReport else {
-            log("statisticsReport is nil", .error)
+            // A nil report now means stats were intentionally skipped (peer connection closing / not
+            // connected) — not an error.
             return
         }
 
@@ -461,7 +462,7 @@ extension Track {
         var _simulcastStatistics: [VideoCodec: TrackStatistics] = [:]
 
         for _sender in simulcastRtpSenders {
-            let _report = await transport.statistics(for: _sender.value)
+            guard let _report = await transport.statistics(for: _sender.value) else { continue }
             _simulcastStatistics[_sender.key] = TrackStatistics(from: Array(_report.statistics.values),
                                                                 prevStatistics: prevSimulcastStatistics[_sender.key])
         }

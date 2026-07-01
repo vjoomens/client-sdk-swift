@@ -39,6 +39,9 @@ actor Transport: NSObject, Loggable {
         connectionState == .connected
     }
 
+    /// Set once `close()` begins so we stop querying the peer connection (e.g. getStats) during teardown.
+    private var _isClosed = false
+
     var localDescription: LKRTCSessionDescription? {
         _pc.localDescription
     }
@@ -210,6 +213,8 @@ actor Transport: NSObject, Loggable {
     }
 
     func close() async {
+        _isClosed = true
+
         // prevent debounced negotiate firing
         await _debounce.cancel()
 
@@ -263,16 +268,22 @@ extension Transport {
 // MARK: - Stats
 
 extension Transport {
-    func statistics(for sender: LKRTCRtpSender) async -> LKRTCStatisticsReport {
-        await withCheckedContinuation { (continuation: CheckedContinuation<LKRTCStatisticsReport, Never>) in
+    func statistics(for sender: LKRTCRtpSender) async -> LKRTCStatisticsReport? {
+        // Don't query stats once the peer connection is closing/closed or not connected. getStats runs
+        // on the shared signaling/worker threads (regardless of which track was requested) and can
+        // deadlock against the transport teardown and the E2EE frame-cryptor while transports and
+        // transceivers are being rebuilt or destroyed (crash: video_frame_transformer -> __DISPATCH_WAIT_FOR_QUEUE__).
+        guard !_isClosed, isConnected else { return nil }
+        return await withCheckedContinuation { (continuation: CheckedContinuation<LKRTCStatisticsReport, Never>) in
             _pc.statistics(for: sender) { sd in
                 continuation.resume(returning: sd)
             }
         }
     }
 
-    func statistics(for receiver: LKRTCRtpReceiver) async -> LKRTCStatisticsReport {
-        await withCheckedContinuation { (continuation: CheckedContinuation<LKRTCStatisticsReport, Never>) in
+    func statistics(for receiver: LKRTCRtpReceiver) async -> LKRTCStatisticsReport? {
+        guard !_isClosed, isConnected else { return nil }
+        return await withCheckedContinuation { (continuation: CheckedContinuation<LKRTCStatisticsReport, Never>) in
             _pc.statistics(for: receiver) { sd in
                 continuation.resume(returning: sd)
             }
